@@ -1,45 +1,33 @@
 """
-Python + Pyspark file loader
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-This script allows user to load the file in specific format and write it back as parquet
-
-"""
-
-
-"""
 etl_job.py
-~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
 
-This Python module contains an example Apache Spark ETL job definition
-that implements best practices for production ETL jobs. It can be
-submitted to a Spark cluster (or locally) using the 'spark-submit'
+This script allows user 
+
+- to load the file from a specific format ( for now it is been made csv) 
+- transform the necessary pre-processing of the data for better analysis
+- write it back as parquet so it can be referenced and visualized
+
+
+The job  can be submitted to a Spark local  (or cluster if we change the master to a URL) using the 'spark-submit'
 command found in the '/bin' directory of all Spark distributions
-(necessary for running any Spark job, locally or otherwise). For
-example, this example script can be executed as follows,
+For example, this example script can be executed as follows,
 
     $SPARK_HOME/bin/spark-submit \
     --master spark://localhost:7077 \
     --py-files packages.zip \
-    --files configs/etl_config.json \
     jobs/etl_job.py
-
-where packages.zip contains Python modules required by ETL job (in
-this example it contains a class to provide access to Spark's logger),
-which need to be made available to each executor process on every node
-in the cluster; etl_config.json is a text file sent to the cluster,
-containing a JSON object with all of the configuration parameters
-required by the ETL job; and, etl_job.py contains the Spark application
-to be executed by a driver process on the Spark master node.
 
 For more details on submitting Spark applications, please see here:
 http://spark.apache.org/docs/latest/submitting-applications.html
 
-Our chosen approach for structuring jobs is to separate the individual
-'units' of ETL - the Extract, Transform and Load parts - into dedicated
-functions, such that the key Transform steps can be covered by tests
-and jobs or called from within another environment (e.g. a Jupyter or
-Zeppelin notebook).
+The chosen approach here for structuring jobs is to separate the individual
+'units' of ETL - the Extract, Transform (broken down into multiple functions for each type of transformation) and Load parts - into dedicated
+functions
+In future each function can be extended to its own class of etl_input, etl_tranformation and etl_output. 
+
+These are in such a way that  the key steps can be covered by testsand jobs or called from within another environment.
+
 """
 
 import pandas as pd
@@ -83,30 +71,27 @@ def main():
     
     energy_hourly_median = hourly_median(energy_with_meta_data)
 
-    load_data(energy_hourly_median)
-
     # log the success and terminate Spark application
     log.warn('test_etl_job is finished')
     spark.stop()
     return None
 
-class EtlInput:
 
-    def extract_data(spark, file_path="", input_format="csv") -> DataFrame:
-        """Load data from any file format. This method can be extended to add any file formats in future
-        :param spark: Spark session object.
-        :param file_path: file path of the file either local or any remote location like S3.        
-        :param input_format: file format of the input file
-        :return: Spark DataFrame.
-        """
-        if input_format =="csv":
-             df = (
-                 spark
-                 .read.csv(file_path, 
-                           header=True, 
-                           inferSchema=True)
-                           )
-             return df
+def extract_data(spark, file_path="", input_format="csv") -> DataFrame:
+    """Load data from any file format. This method can be extended to add any file formats in future
+    :param spark: Spark session object.
+    :param file_path: file path of the file either local or any remote location like S3.        
+    :param input_format: file format of the input file
+    :return: Spark DataFrame.
+    """
+    if input_format =="csv":
+            df = (
+                spark
+                .read.csv(file_path, 
+                        header=True, 
+                        inferSchema=True)
+                        )
+            return df
 
 
 def add_source_file_name(df, extract_file_name_from_path=False):
@@ -227,11 +212,12 @@ def hourly_median(df):
                  F.col('nmi_id'), 
                  F.col('State'))
         .agg(F.median('quantity_kwh').alias('median_energy_consumption_per_hour'))
-
     )
+    hourly_median = hourly_median.filter(F.col('hour').isNotNull())
+    
     return hourly_median
                      
-def load_data(df):
+def output_data(df, path):
     """Collect data locally and write to CSV.
 
     :param df: DataFrame to print.
@@ -243,45 +229,6 @@ def load_data(df):
      .csv('loaded_data', mode='overwrite', header=True))
     return None
 
-
-def create_test_data(spark, config):
-    """Create test data.
-
-    This function creates both both pre- and post- transformation data
-    saved as Parquet files in tests/test_data. This will be used for
-    unit tests as well as to load as part of the example ETL job.
-    :return: None
-    """
-    # create example data from scratch
-    local_records = [
-        Row(id=1, first_name='Dan', second_name='Germain', floor=1),
-        Row(id=2, first_name='Dan', second_name='Sommerville', floor=1),
-        Row(id=3, first_name='Alex', second_name='Ioannides', floor=2),
-        Row(id=4, first_name='Ken', second_name='Lai', floor=2),
-        Row(id=5, first_name='Stu', second_name='White', floor=3),
-        Row(id=6, first_name='Mark', second_name='Sweeting', floor=3),
-        Row(id=7, first_name='Phil', second_name='Bird', floor=4),
-        Row(id=8, first_name='Kim', second_name='Suter', floor=4)
-    ]
-
-    df = spark.createDataFrame(local_records)
-
-    # write to Parquet file format
-    (df
-     .coalesce(1)
-     .write
-     .parquet('tests/test_data/employees', mode='overwrite'))
-
-    # create transformed version of data
-    df_tf = transform_data(df, config['steps_per_floor'])
-
-    # write transformed version of data to Parquet
-    (df_tf
-     .coalesce(1)
-     .write
-     .parquet('tests/test_data/employees_report', mode='overwrite'))
-
-    return None
 
 
 # entry point for PySpark ETL application
